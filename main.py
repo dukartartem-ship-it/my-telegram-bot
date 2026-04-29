@@ -115,7 +115,7 @@ def safe_send_photo(chat_id, photo, caption=None, parse_mode=None, reply_markup=
 # ==============================================
 # ТВОИ ДАННЫЕ
 # ==============================================
-TOKEN = '8615517752:AAF0ADC5YhKgIONtOKMUEKgxBwc2aKpFdPs'  # Твой токен
+TOKEN = os.environ.get("TELEGRAM_TOKEN")  # Твой токен
 ADMIN_USERNAME = 'cntrlxx'  # Твой username
 
 bot = telebot.TeleBot(TOKEN)
