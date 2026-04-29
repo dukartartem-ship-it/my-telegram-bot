@@ -146,7 +146,7 @@ IMAGES = {
 # БАЗА ДАННЫХ
 # ==============================================
 
-APP_DATA_DIR = os.path.join(os.path.expanduser('~'), 'Documents', 'anon_bot_data')
+APP_DATA_DIR = '/tmp/anon_bot_data'
 os.makedirs(APP_DATA_DIR, exist_ok=True)
 
 DATA_FILE = os.path.join(APP_DATA_DIR, 'users_data.json')
@@ -280,6 +280,15 @@ def edit_with_image(message, new_text, image_key, parse_mode='Markdown', reply_m
 
 def get_user_profile(user_id):
     user_id = str(user_id)
+    
+    # ПРИНУДИТЕЛЬНЫЙ СБРОС - временно для отладки
+    if user_id in users_data:
+        print(f"Сбрасываю данные для {user_id}")
+        users_data[user_id]["gender"] = None
+        users_data[user_id]["age"] = None
+        users_data[user_id]["state"] = "none"
+        save_data(users_data)
+    
     if user_id not in users_data:
         users_data[user_id] = {
             "username": None,
@@ -291,7 +300,7 @@ def get_user_profile(user_id):
             "total_chat_time": 0,
             "ref_code": generate_ref_code(user_id),
             "invited_count": 0,
-            "invited_unique_count": 0,  # Новый ключ
+            "invited_unique_count": 0,
             "reactions_received": {"❤️": 0, "🔥": 0, "🥶": 0, "💩": 0},
             "state": "none",
             "partner_id": None,
@@ -2660,14 +2669,16 @@ def handle_all(m):
 # ==============================================
 
 if __name__ == '__main__':
-    import threading
-    from flask import Flask
-    
     print("╔════════════════════════╗")
     print("║   🤖 БОТ ЗАПУЩЕН       ║")
     print("╚════════════════════════╝")
     print(f"👤 Админ: @{ADMIN_USERNAME}")
     print(f"📁 Данные: {APP_DATA_DIR}")
+    
+    # Отладка токена
+    print(f"✅ Токен получен: {TOKEN is not None}")
+    if TOKEN is None:
+        print("❌ ОШИБКА: Токен не найден! Проверь переменную TELEGRAM_TOKEN в Render")
     
     cleanup_old_stories()
     
@@ -2681,30 +2692,5 @@ if __name__ == '__main__':
     print("🎁 Новая механика: 5 друзей = неделя Premium!")
     print("🛡 Защита от накрутки рефералов активирована!")
     
-    # ==============================================
-    # ВЕБ-СЕРВЕР ДЛЯ RENDER (ОЧЕНЬ ВАЖНО!)
-    # ==============================================
-    flask_app = Flask(__name__)
-    
-    @flask_app.route('/')
-    def health_check():
-        return "Bot is running!", 200
-    
-    @flask_app.route('/health')
-    def health():
-        return "OK", 200
-    
-    # Запускаем Flask в отдельном потоке (daemon=True — чтобы не мешал боту)
-    port = int(os.environ.get('PORT', 8080))
-    
-    def run_flask():
-        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print(f"🌐 Веб-сервер запущен на порту {port}")
-    
-    # ==============================================
-    # ЗАПУСК БОТА (ОСНОВНОЙ ПОТОК)
-    # ==============================================
+    print("🚀 Запускаю бота...")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
