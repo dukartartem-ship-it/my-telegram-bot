@@ -2656,10 +2656,13 @@ def handle_all(m):
     bot.reply_to(m, "ℹ️ Используй кнопки", reply_markup=main_keyboard())
 
 # ==============================================
-# ЗАПУСК
+# ЗАПУСК С ВЕБ-СЕРВЕРОМ ДЛЯ RENDER
 # ==============================================
 
 if __name__ == '__main__':
+    import threading
+    from flask import Flask
+    
     print("╔════════════════════════╗")
     print("║   🤖 БОТ ЗАПУЩЕН       ║")
     print("╚════════════════════════╝")
@@ -2678,4 +2681,30 @@ if __name__ == '__main__':
     print("🎁 Новая механика: 5 друзей = неделя Premium!")
     print("🛡 Защита от накрутки рефералов активирована!")
     
-    bot.infinity_polling()
+    # ==============================================
+    # ВЕБ-СЕРВЕР ДЛЯ RENDER (ОЧЕНЬ ВАЖНО!)
+    # ==============================================
+    flask_app = Flask(__name__)
+    
+    @flask_app.route('/')
+    def health_check():
+        return "Bot is running!", 200
+    
+    @flask_app.route('/health')
+    def health():
+        return "OK", 200
+    
+    # Запускаем Flask в отдельном потоке (daemon=True — чтобы не мешал боту)
+    port = int(os.environ.get('PORT', 8080))
+    
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print(f"🌐 Веб-сервер запущен на порту {port}")
+    
+    # ==============================================
+    # ЗАПУСК БОТА (ОСНОВНОЙ ПОТОК)
+    # ==============================================
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
