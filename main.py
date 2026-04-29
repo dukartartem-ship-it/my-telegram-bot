@@ -1278,6 +1278,38 @@ def admin_exit(m):
 def callback(call):
     user_id = call.from_user.id
     uid = str(user_id)
+    
+    # ==============================================
+    # ГАРАНТИРУЕМ, ЧТО ПОЛЬЗОВАТЕЛЬ ЕСТЬ В БАЗЕ
+    # ==============================================
+    if uid not in users_data:
+        users_data[uid] = {
+            "username": call.from_user.username,
+            "first_seen": time.time(),
+            "gender": None,
+            "age": None,
+            "dialogs": 0,
+            "messages_sent": 0,
+            "total_chat_time": 0,
+            "ref_code": generate_ref_code(uid),
+            "invited_count": 0,
+            "invited_unique_count": 0,
+            "reactions_received": {"❤️": 0, "🔥": 0, "🥶": 0, "💩": 0},
+            "state": "none",
+            "partner_id": None,
+            "chat_id": None,
+            "search_start_time": 0,
+            "filters": {
+                "gender": "any",
+                "age": [],
+                "interests": [],
+                "country": "any"
+            },
+            "banned": False,
+            "story_temp": {}
+        }
+        save_data(users_data)
+    
     data = call.data
     
     # ==============================================
@@ -1409,13 +1441,57 @@ def callback(call):
         return
     
     # ==============================================
-    # PREMIUM КНОПКИ - ПЕРЕХОД К ОПЛАТЕ (АКЦИЯ: ЦЕНЫ УМЕНЬШЕНЫ)
+    # РЕГИСТРАЦИЯ (ИСПРАВЛЕНА)
+    # ==============================================
+    
+    if data == "reg_male" or data == "reg_female":
+        # Убедимся, что пользователь существует
+        if uid not in users_data:
+            users_data[uid] = {}
+        users_data[uid]["gender"] = "male" if data == "reg_male" else "female"
+        save_data(users_data)
+        
+        # Клавиатура выбора возраста
+        kb = InlineKeyboardMarkup(row_width=4)
+        for age in [11,12,13,14,15,16,17,18,19,20,21,22]:
+            kb.add(InlineKeyboardButton(str(age), callback_data=f"reg_age_{age}"))
+        kb.add(InlineKeyboardButton("22+", callback_data="reg_age_22+"))
+        
+        bot.edit_message_text(
+            "📅 *Выбери свой возраст:*",
+            user_id,
+            call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=kb
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data.startswith("reg_age_"):
+        age_str = data.replace("reg_age_", "")
+        if age_str == "22+":
+            users_data[uid]["age"] = 22
+        else:
+            users_data[uid]["age"] = int(age_str)
+        users_data[uid]["state"] = "none"
+        save_data(users_data)
+        
+        send_with_image(
+            user_id,
+            "✅ *Профиль заполнен!*\n\n🎭 Добро пожаловать в анонимный чат!",
+            "main",
+            reply_markup=main_keyboard()
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
+    # ==============================================
+    # PREMIUM КНОПКИ
     # ==============================================
     
     if data in ["premium_day", "premium_5days", "premium_month", "premium_forever"]:
         names = {"premium_day": "1 день", "premium_5days": "5 дней", 
                 "premium_month": "месяц", "premium_forever": "навсегда"}
-        # АКЦИЯ: цены уменьшены вдвое
         stars = {"premium_day": 35, "premium_5days": 100, "premium_month": 225, "premium_forever": 500}
         
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -1454,13 +1530,10 @@ def callback(call):
         plan = data.replace("pay_premium_", "")
         names = {"premium_day": "1 день", "premium_5days": "5 дней", 
                 "premium_month": "месяц", "premium_forever": "навсегда"}
-        # АКЦИЯ: цены уменьшены вдвое
         stars = {"premium_day": 35, "premium_5days": 100, "premium_month": 225, "premium_forever": 500}
         
-        # Создаем массив с ценой
         prices = [LabeledPrice(label=f"Premium {names[plan]}", amount=stars[plan])]
         
-        # Отправляем счет
         bot.send_invoice(
             user_id,
             title=f"⭐ Premium {names[plan]}",
@@ -1476,99 +1549,7 @@ def callback(call):
         return
     
     # ==============================================
-    # БЕСКОНЕЧНАЯ ПРОКРУТКА ИСТОРИЙ
-    # ==============================================
-    
-    if data.startswith("story_next_"):
-        current_story_id = data.replace("story_next_", "")
-        current_time = time.time()
-        
-        available_stories = []
-        for story_id, story in stories_data.items():
-            if current_time - story["time"] <= 86400:
-                available_stories.append(story_id)
-        
-        if not available_stories:
-            send_with_image(
-                user_id,
-                "😴 *Нет историй*\n\nДобавь свою первую историю!",
-                "stories",
-                reply_markup=InlineKeyboardMarkup().add(
-                    InlineKeyboardButton("📝 Добавить историю", callback_data="story_add")
-                )
-            )
-            bot.answer_callback_query(call.id)
-            return
-        
-        if current_story_id in available_stories:
-            current_index = available_stories.index(current_story_id)
-            next_index = (current_index + 1) % len(available_stories)
-            story_id = available_stories[next_index]
-        else:
-            story_id = random.choice(available_stories)
-        
-        story = stories_data[story_id]
-        
-        if "views" not in story:
-            story["views"] = []
-        
-        is_first_view = user_id not in story["views"]
-        if is_first_view:
-            story["views"].append(user_id)
-        save_stories(stories_data)
-        
-        story_time = datetime.fromtimestamp(story["time"]).strftime('%H:%M %d.%m')
-        author = "Твоя история" if story["user_id"] == uid else "История"
-        
-        text = f"📖 *{author}*\n\n"
-        text += f"_{story['text']}_\n\n"
-        text += f"⏱ {story_time}\n"
-        text += f"👁 Просмотров: {len(story.get('views', []))}"
-        
-        if is_first_view:
-            text += f"\n✨ Это твой первый просмотр!"
-        
-        keyboard = InlineKeyboardMarkup(row_width=3)
-        keyboard.add(
-            InlineKeyboardButton("⏪ В меню", callback_data="story_back"),
-            InlineKeyboardButton("▶️ Следующая", callback_data=f"story_next_{story_id}"),
-            InlineKeyboardButton("📝 Добавить", callback_data="story_add")
-        )
-        
-        try:
-            bot.delete_message(user_id, call.message.message_id)
-        except:
-            pass
-        
-        if story.get("photo"):
-            try:
-                bot.send_photo(
-                    user_id,
-                    story["photo"],
-                    caption=text,
-                    parse_mode='Markdown',
-                    reply_markup=keyboard
-                )
-            except:
-                send_with_image(
-                    user_id,
-                    text + "\n\n❌ Фото не загрузилось",
-                    "stories",
-                    reply_markup=keyboard
-                )
-        else:
-            send_with_image(
-                user_id,
-                text,
-                "stories",
-                reply_markup=keyboard
-            )
-        
-        bot.answer_callback_query(call.id)
-        return
-    
-    # ==============================================
-    # АНОНИМНЫЕ ИСТОРИИ
+    # ОСТАЛЬНЫЕ КОЛЛБЭКИ (истории, реакции и т.д.)
     # ==============================================
     
     if data == "story_add":
@@ -1725,18 +1706,98 @@ def callback(call):
         bot.answer_callback_query(call.id)
         return
     
-    # Регистрация
-    if data == "reg_male" or data == "reg_female":
-        users_data[uid]["gender"] = "male" if data == "reg_male" else "female"
-        save_data(users_data)
-        bot.edit_message_text("📅 *Напиши возраст (11-99)*:", user_id, call.message.message_id,
-                            parse_mode='Markdown')
-        users_data[uid]["state"] = "waiting_age"
-        save_data(users_data)
+    if data.startswith("story_next_"):
+        current_story_id = data.replace("story_next_", "")
+        current_time = time.time()
+        
+        available_stories = []
+        for story_id, story in stories_data.items():
+            if current_time - story["time"] <= 86400:
+                available_stories.append(story_id)
+        
+        if not available_stories:
+            send_with_image(
+                user_id,
+                "😴 *Нет историй*\n\nДобавь свою первую историю!",
+                "stories",
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("📝 Добавить историю", callback_data="story_add")
+                )
+            )
+            bot.answer_callback_query(call.id)
+            return
+        
+        if current_story_id in available_stories:
+            current_index = available_stories.index(current_story_id)
+            next_index = (current_index + 1) % len(available_stories)
+            story_id = available_stories[next_index]
+        else:
+            story_id = random.choice(available_stories)
+        
+        story = stories_data[story_id]
+        
+        if "views" not in story:
+            story["views"] = []
+        
+        is_first_view = user_id not in story["views"]
+        if is_first_view:
+            story["views"].append(user_id)
+        save_stories(stories_data)
+        
+        story_time = datetime.fromtimestamp(story["time"]).strftime('%H:%M %d.%m')
+        author = "Твоя история" if story["user_id"] == uid else "История"
+        
+        text = f"📖 *{author}*\n\n"
+        text += f"_{story['text']}_\n\n"
+        text += f"⏱ {story_time}\n"
+        text += f"👁 Просмотров: {len(story.get('views', []))}"
+        
+        if is_first_view:
+            text += f"\n✨ Это твой первый просмотр!"
+        
+        keyboard = InlineKeyboardMarkup(row_width=3)
+        keyboard.add(
+            InlineKeyboardButton("⏪ В меню", callback_data="story_back"),
+            InlineKeyboardButton("▶️ Следующая", callback_data=f"story_next_{story_id}"),
+            InlineKeyboardButton("📝 Добавить", callback_data="story_add")
+        )
+        
+        try:
+            bot.delete_message(user_id, call.message.message_id)
+        except:
+            pass
+        
+        if story.get("photo"):
+            try:
+                bot.send_photo(
+                    user_id,
+                    story["photo"],
+                    caption=text,
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            except:
+                send_with_image(
+                    user_id,
+                    text + "\n\n❌ Фото не загрузилось",
+                    "stories",
+                    reply_markup=keyboard
+                )
+        else:
+            send_with_image(
+                user_id,
+                text,
+                "stories",
+                reply_markup=keyboard
+            )
+        
         bot.answer_callback_query(call.id)
         return
     
-    # Реакции
+    # ==============================================
+    # РЕАКЦИИ
+    # ==============================================
+    
     if data.startswith("react_"):
         parts = data.split("_")
         target = parts[1]
@@ -1746,10 +1807,100 @@ def callback(call):
             users_data[target]["reactions_received"][react] += 1
             save_data(users_data)
             bot.answer_callback_query(call.id, f"✅ {react}")
-            bot.edit_message_text(f"✅ Ты поставил {react}", user_id, call.message.message_id)
+            try:
+                bot.edit_message_text(f"✅ Ты поставил {react}", user_id, call.message.message_id)
+            except:
+                pass
         return
     
-    # Вернуть
+    # ==============================================
+    # ПРЕМИУМ ШОУ
+    # ==============================================
+    
+    if data == "premium_show":
+        p = get_user_profile(user_id)
+        text = f"""
+╔════════════════╗
+║     💎 PREMIUM  ║
+╚════════════════╝
+
+🎁 *АКЦИЯ К ОТКРЫТИЮ!* 
+🔥 Все цены уменьшены в 2 раза!
+
+🌟 *Преимущества:*
+• Выбор пола собеседника
+• Возраст и данные собеседника
+• Вернуть собеседника
+• Обнуление рейтинга
+
+💎 *Тарифы (АКЦИЯ!):*
+⭐ 1 день — 35 ⭐
+⭐ 5 дней — 100 ⭐
+⭐ Месяц — 225 ⭐
+💎 Навсегда — 500 ⭐
+
+🎁 *Бесплатно:* 
+• +2 часа за друга
+• 5 друзей = НЕДЕЛЯ PREMIUM!
+
+👥 Приглашено: {p['invited_unique_count']}
+🎯 До награды: {max(0, 5 - p['invited_unique_count'])} друзей
+        """
+        try:
+            edit_with_image(call.message, text, "premium", reply_markup=premium_keyboard())
+        except:
+            send_with_image(user_id, text, "premium", reply_markup=premium_keyboard())
+        bot.answer_callback_query(call.id)
+        return
+    
+    # ==============================================
+    # ВСЕ ОСТАЛЬНЫЕ КОЛЛБЭКИ
+    # ==============================================
+    
+    # Профиль - моя статистика
+    if data == "my_stats":
+        p = get_user_profile(user_id)
+        r = p["reactions_received"]
+        line = f"❤️ {r['❤️']}  🔥 {r['🔥']}  🥶 {r['🥶']}  💩 {r['💩']}"
+        
+        chat_time = p.get("total_chat_time", 0)
+        hours = chat_time // 3600
+        minutes = (chat_time % 3600) // 60
+        time_str = f"{hours}ч {minutes}м"
+        
+        text = f"""
+📊 *Подробная статистика*
+
+💬 Диалогов: {p['dialogs']}
+📨 Сообщений: {p['messages_sent']}
+⏱ Время в чатах: {time_str}
+👥 Приглашено (уникальных): {p['invited_unique_count']}
+
+🎭 {line}
+        """
+        send_with_image(user_id, text, "stats")
+        bot.answer_callback_query(call.id)
+        return
+    
+    # Профиль - реферальная ссылка
+    if data == "ref_link":
+        p = get_user_profile(user_id)
+        link = f"https://t.me/{bot.get_me().username}?start={p['ref_code']}"
+        
+        text = f"""
+🔗 *Твоя реферальная ссылка*
+
+`{link}`
+
+👥 Приглашено уникальных: {p['invited_unique_count']}
+⏱ Часов премиума: {p['invited_unique_count'] * 2}
+🎯 До награды (5 друзей): {max(0, 5 - p['invited_unique_count'])} друзей
+        """
+        send_with_image(user_id, text, "ref")
+        bot.answer_callback_query(call.id)
+        return
+    
+    # Вернуть собеседника
     if data.startswith("return_"):
         target = data.replace("return_", "")
         if not check_premium(user_id):
@@ -1802,57 +1953,21 @@ def callback(call):
         save_data(users_data)
         
         bot.answer_callback_query(call.id, "✅ Отправлено")
-        bot.edit_message_text("✅ Жалоба отправлена", user_id, call.message.message_id)
+        try:
+            bot.edit_message_text("✅ Жалоба отправлена", user_id, call.message.message_id)
+        except:
+            pass
         return
     
     if data == "rep_cancel":
-        bot.edit_message_text("❌ Отменено", user_id, call.message.message_id)
+        try:
+            bot.edit_message_text("❌ Отменено", user_id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
     
-    # Профиль
-    if data == "my_stats":
-        p = get_user_profile(user_id)
-        r = p["reactions_received"]
-        line = f"❤️ {r['❤️']}  🔥 {r['🔥']}  🥶 {r['🥶']}  💩 {r['💩']}"
-        
-        chat_time = p.get("total_chat_time", 0)
-        hours = chat_time // 3600
-        minutes = (chat_time % 3600) // 60
-        time_str = f"{hours}ч {minutes}м"
-        
-        text = f"""
-📊 *Подробная статистика*
-
-💬 Диалогов: {p['dialogs']}
-📨 Сообщений: {p['messages_sent']}
-⏱ Время в чатах: {time_str}
-👥 Приглашено (уникальных): {p['invited_unique_count']}
-
-🎭 {line}
-        """
-        send_with_image(user_id, text, "stats")
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == "ref_link":
-        p = get_user_profile(user_id)
-        link = f"https://t.me/{bot.get_me().username}?start={p['ref_code']}"
-        
-        text = f"""
-🔗 *Твоя реферальная ссылка*
-
-`{link}`
-
-👥 Приглашено уникальных: {p['invited_unique_count']}
-⏱ Часов премиума: {p['invited_unique_count'] * 2}
-🎯 До награды (5 друзей): {max(0, 5 - p['invited_unique_count'])} друзей
-        """
-        send_with_image(user_id, text, "ref")
-        bot.answer_callback_query(call.id)
-        return
-    
-    # Фильтры
+    # Фильтры - начало
     if data == "f_gender":
         if not check_premium(user_id):
             keyboard = InlineKeyboardMarkup(row_width=1)
@@ -2055,43 +2170,7 @@ def callback(call):
         bot.answer_callback_query(call.id)
         return
     
-    if data == "premium_show":
-        p = get_user_profile(user_id)
-        text = f"""
-╔════════════════╗
-║     💎 PREMIUM  ║
-╚════════════════╝
-
-🎁 *АКЦИЯ К ОТКРЫТИЮ!* 
-🔥 Все цены уменьшены в 2 раза!
-
-🌟 *Преимущества:*
-• Выбор пола собеседника
-• Возраст и данные собеседника
-• Вернуть собеседника
-• Обнуление рейтинга
-
-💎 *Тарифы (АКЦИЯ!):*
-⭐ 1 день — 35 ⭐
-⭐ 5 дней — 100 ⭐
-⭐ Месяц — 225 ⭐
-💎 Навсегда — 500 ⭐
-
-🎁 *Бесплатно:* 
-• +2 часа за друга
-• 5 друзей = НЕДЕЛЯ PREMIUM!
-
-👥 Приглашено: {p['invited_unique_count']}
-🎯 До награды: {max(0, 5 - p['invited_unique_count'])} друзей
-        """
-        try:
-            edit_with_image(call.message, text, "premium", reply_markup=premium_keyboard())
-        except:
-            send_with_image(user_id, text, "premium", reply_markup=premium_keyboard())
-        bot.answer_callback_query(call.id)
-        return
-    
-    # Premium - Обнуление рейтинга
+    # Premium - обнуление рейтинга
     if data == "premium_reset":
         has_premium = check_premium(user_id)
         
@@ -2106,7 +2185,6 @@ def callback(call):
             )
             bot.answer_callback_query(call.id, "✅ Рейтинг обнулен")
         else:
-            # Отправляем счет на 25 звезд (АКЦИЯ)
             prices = [LabeledPrice(label="Обнуление рейтинга", amount=25)]
             
             bot.send_invoice(
